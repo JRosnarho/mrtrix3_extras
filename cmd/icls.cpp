@@ -103,7 +103,8 @@ class Processor {
 
 void run ()
 {
-  auto problem[3][3] = {{650,305,900},{1000,1400,900},{350,1500,250}};
+  // We'll keep the problem class commented until I can find a way to write it properly
+  // float problem[3][3] = {{650,305,900},{1000,1400,900},{350,1500,250}};
   auto max_iterations      = get_option_value ("niter",           0  );
   auto tolerance           = get_option_value ("tolerance",       0.0);
   auto solution_norm_reg   = get_option_value ("solution_norm",   0.0);
