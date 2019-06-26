@@ -103,8 +103,6 @@ class Processor {
 
 void run ()
 {
-  // We'll keep the problem class commented until I can find a way to write it properly
-  // float problem[3][3] = {{650,305,900},{1000,1400,900},{350,1500,250}};
   auto max_iterations      = get_option_value ("niter",           0  );
   auto tolerance           = get_option_value ("tolerance",       0.0);
   auto solution_norm_reg   = get_option_value ("solution_norm",   0.0);
@@ -143,13 +141,5 @@ void run ()
 
   ThreadedLoop ("performing constrained least-squares fit", in, 0, 3)
     .run (Processor (problem, prediction), in, out);
-
-  // Now we have the first output, but it is horribly incorrect so we need to
-  // Acquire the best n-th number of solutions (i.e the ones that are closest to 
-  // the maximum value) remember their voxel positions and then read those positions
-  // on the input data which will allow us to get the signals for (theoretically) pure 
-  // lipids, tissue and liquids in the T1, PD and T2 weighted images.
-  // This process may need to be repeated a fair few number of times until the values of H 
-  // converge.
 }
 
