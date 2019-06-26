@@ -20,7 +20,6 @@
 #include "algo/threaded_loop.h"
 #include "math/constrained_least_squares.h"
 
-
 using namespace MR;
 using namespace App;
 
@@ -35,6 +34,7 @@ void usage ()
 
   ARGUMENTS
     + Argument ("input", "the input images Y.").type_image_in ()
+    + Argument ("problem", "the problem matrix M")
     + Argument ("output", "the output solution image X.").type_image_out ();
 
   OPTIONS
