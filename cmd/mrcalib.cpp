@@ -43,7 +43,4 @@ void run()
   float H[3][3] = {{650,350,900},{1000,1400,900},{350,1500,250}};
   std::ofstream fout("H.txt");
   fout << H;
-
-  // We then need to run our first iteration of the icls command
-
 }
