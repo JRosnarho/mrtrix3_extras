@@ -19,6 +19,7 @@
 #include "image.h"
 #include "algo/threaded_loop.h"
 #include "math/constrained_least_squares.h"
+#include "calib.h"
 
 using namespace MR;
 using namespace App;
@@ -97,10 +98,6 @@ class Processor {
     Image<value_type> prediction;
 };
 
-
-
-
-
 void run ()
 {
   auto max_iterations      = get_option_value ("niter",           0  );
@@ -126,6 +123,7 @@ void run ()
   if (in.size(3) != ssize_t (problem.num_measurements()))
     throw Exception ("number of volumes in input image \"" + std::string (argument[0]) + "\" does not match number of columns in problem matrix \"" + std::string (argument[1]) + "\"");
 
+  
   opt = get_options ("prediction");
   Image<value_type> prediction;
   if (opt.size()) {
