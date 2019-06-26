@@ -1,6 +1,8 @@
 #include "command.h"
 #include "progressbar.h"
 
+#include <fstream>
+
 using namespace MR;
 using namespace App;
 
@@ -34,4 +36,14 @@ void usage()
    // done.
 }
 
-void run(){}
+void run()
+{
+  // First we need to predefine the H matrix so that we can use the icls command for the first output.
+  // Furthermor we need to save it as a text file
+  float H[3][3] = {{650,350,900},{1000,1400,900},{350,1500,250}};
+  std::ofstream fout("H.txt");
+  fout << H;
+
+  // We then need to run our first iteration of the icls command
+
+}
