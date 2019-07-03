@@ -19,7 +19,6 @@
 #include "image.h"
 #include "algo/threaded_loop.h"
 #include "math/constrained_least_squares.h"
-#include "calib.h"
 
 using namespace MR;
 using namespace App;
