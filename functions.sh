@@ -24,8 +24,8 @@ function get_mask {
 function normalise_and_rescale {
   mrconvert "$1" __tmp-[].mif -force
   #scale=($(~/mrtrix3_mine/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
-  #scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
-  scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -balanced  -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
+  scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
+  #scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -balanced  -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
   #scale=($(~/mrtrix3/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
   echo ${scale[@]} 
   for n in {0..2}; do mrcalc __tmp_norm-$n.mif ${scale[$n]} -mult __tmp_norm_rescaled-$n.mif -force; done
