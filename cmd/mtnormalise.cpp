@@ -179,14 +179,6 @@ struct NormFieldIm {
    }
 };
 
-// Struct calculating the log of the summed_log values
-struct SummedLogValue {
-  template <class ImageType1>
-    void operator() (ImageType1& summed_log) {
-      summed_log.value() = std::log (summed_log.value());
-    }
-};
-
 // Struct calculating the initial summed_log values
 struct SummedLog {
   SummedLog (const size_t n_tissue_types, Eigen::VectorXd balance_factors) : n_tissue_types (n_tissue_types), balance_factors (balance_factors) { }
@@ -222,13 +214,92 @@ struct NormFieldLog {
 };
 
 // Function to define the output values at the beginning of the run () function
-Image<float> DefineOutput(vector<std::string> output_filenames, vector<Header> output_headers) {
-  Image<float> output_image;
+ImageType DefineOutput(vector<std::string> output_filenames, vector<Header> output_headers) {
+  ImageType output_image;
   for (size_t j = 0; j < output_filenames.size(); ++j) {
-     output_image = Image<float>::scratch (output_headers[j], output_filenames[j]);
+     output_image = ImageType::scratch (output_headers[j], output_filenames[j]);
   }
 return output_image;
 };
+
+/*
+// Function to perform outlier rejection
+int OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask, vector<float> summed_log_values, ImageType summed_log, ImageType norm_field_image, ImageType combined_tissue, Eigen::VectorXd balance_factors, int num_voxels){
+
+    ThreadedLoop (summed_log).run (
+        [&balance_factors] (ImageType& sum, ImageType& comb, ImageType& field) {
+          ValueType s = 0.0;
+          for (int j = 0; j < comb.size(3); ++j) {
+            comb.index(3) = j;
+            s += balance_factors[j] * comb.value() / field.value();
+          }
+          sum.value() = std::log (s);
+        }, summed_log, combined_tissue, norm_field_image);
+
+
+    threaded_copy (initial_mask, mask);
+
+//    vector<float> summed_log_values;
+    summed_log_values.reserve (num_voxels);
+    for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
+      if (mask.value())
+        summed_log_values.push_back (summed_log.value());
+    }
+
+    num_voxels = summed_log_values.size();
+
+    const auto lower_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.25f);
+    std::nth_element (summed_log_values.begin(), lower_quartile_it, summed_log_values.end());
+    const float lower_quartile = *lower_quartile_it;
+    const auto upper_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.75f);
+    std::nth_element (lower_quartile_it, upper_quartile_it, summed_log_values.end());
+    const float upper_quartile = *upper_quartile_it;
+    const float lower_outlier_threshold = lower_quartile - outlier_range * (upper_quartile - lower_quartile);
+    const float upper_outlier_threshold = upper_quartile + outlier_range * (upper_quartile - lower_quartile);
+
+
+    for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
+      if (mask.value()) {
+        if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
+          mask.value() = 0;
+          num_voxels--;
+        }
+      }
+    }
+
+return num_voxels;
+};
+*/
+
+/*
+// Mask Modification ThreadedLoop
+struct MaskModification {
+   MaskModification (size_t& num_voxels, float lower_outlier_threshold, float upper_outlier_threshold) : num_voxels (num_voxels), lower_outlier_threshold (lower_outlier_threshold), upper_outlier_threshold (upper_outlier_threshold) { } 
+    void operator () (MaskType& mask, ImageType summed_log) {
+       if (mask.value()) {
+         if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
+           mask.value() = 0;
+           num_voxels--;
+         }
+       }
+   }
+ size_t& num_voxels;
+ float lower_outlier_threshold;
+ float upper_outlier_threshold;
+};
+*/
+
+// Function to compute the Choleski decompostion based on
+// an N by n Eigen matrix and an N by 1 Eigen vector
+Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
+      Eigen::MatrixXd M (X.cols(), X.cols());
+      Eigen::VectorXd alpha (X.cols());
+      M = X.transpose()*X;
+      alpha = X.transpose()*y;
+      Eigen::VectorXd res = M.llt().solve (alpha);
+      return res;
+};
+
 
 void run ()
 {
@@ -320,30 +391,14 @@ void run ()
     input_progress++;
 
     combined_tissue.index (3) = i;
-/*
+
     ThreadedLoop (combined_tissue, 0, 3).run (
         [](decltype(combined_tissue)& comb, decltype(input_images[0]) in) { comb.value() = std::max<float>(in.value (), 0.f); },
         combined_tissue, input_images[i]);
-*/
-    struct CombinedTissue {
-      FORCE_INLINE void operator () (decltype(combined_tissue)& comb_tissue, decltype(input_images[0]) in_images) { comb_tissue.value () = std::max<float>(in_images.value (), 0.f); }
-    };
-    ThreadedLoop (combined_tissue, 0, 3).run (CombinedTissue(), combined_tissue, input_images[i]);
-
   }
 
   size_t num_voxels = 0;
-
-/*
   ThreadedLoop (mask, 0, 3).run ([&num_voxels](decltype(mask) mask) { if (mask.value()) ++num_voxels; }, mask);
-*/
-
-  struct VoxCount {
-  VoxCount(size_t& num_voxels) : num_voxels (num_voxels) { }
-    FORCE_INLINE void operator () (decltype(mask) mask_in) { if (mask_in.value()) { num_voxels++; } }
-    size_t& num_voxels;
-  };
-  ThreadedLoop (mask, 0, 3).run (VoxCount(num_voxels), mask);
 
   if (!num_voxels)
     throw Exception ("Mask contains no valid voxels.");
@@ -360,16 +415,9 @@ void run ()
   auto norm_field_image = ImageType::scratch (header_3D, "Normalisation field (intensity)");
   auto norm_field_log = ImageType::scratch (header_3D, "Normalisation field (log-domain)");
 
-/*
   ThreadedLoop (norm_field_image).run (
       [](decltype(norm_field_image)& in) { in.value() = 1.0; },
       norm_field_image);
-*/
-
-  struct NormFieldValAdj {
-  FORCE_INLINE void operator () (decltype(norm_field_image)& norm_image, decltype(norm_field_log)& norm_log) { norm_image.value() = 1.f; norm_log.value() = 0.f;  }
-  };
-  ThreadedLoop (norm_field_log, 0, 3).run (NormFieldValAdj(), norm_field_image, norm_field_log);
 
   Eigen::VectorXd balance_factors (Eigen::VectorXd::Ones (n_tissue_types));
 
@@ -381,9 +429,7 @@ void run ()
   // tissue (re)balancing loop
   auto outlier_rejection = [&](float outlier_range) {  // TODO: why is this a lambda? Move to dedicated function
   auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
-  // ThreadedLoop (summed_log, 0, 3).run (SummedLog(n_tissue_types, balance_factors), summed_log, combined_tissue, norm_field_image);
-  // ThreadedLoop (summed_log, 0, 3).run (SummedLogValue(), summed_log);
-
+  //ThreadedLoop (summed_log, 0, 3).run (SummedLog(n_tissue_types, balance_factors), summed_log, combined_tissue, norm_field_image);
 
     ThreadedLoop (summed_log).run (
         [&balance_factors] (ImageType& sum, ImageType& comb, ImageType& field) {
@@ -416,6 +462,7 @@ void run ()
     const float lower_outlier_threshold = lower_quartile - outlier_range * (upper_quartile - lower_quartile);
     const float upper_outlier_threshold = upper_quartile + outlier_range * (upper_quartile - lower_quartile);
 
+
     for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
       if (mask.value()) {
         if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
@@ -424,6 +471,9 @@ void run ()
         }
       }
     }
+
+
+// ThreadedLoop(mask).run(MaskModification(num_voxels, lower_outlier_threshold, upper_outlier_threshold),mask, summed_log);
 
 /*
     ThreadedLoop (mask).run (
@@ -437,11 +487,19 @@ void run ()
 */
   };
 
+
   input_progress.done ();
   ProgressBar progress ("performing log-domain intensity normalisation", max_iter);
 
+/*
+  // Pre-writing the summed_log variable and the summed_log_values vector
+  vector<float> summed_log_values;
+  auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
+*/
+
   // Perform an initial outlier rejection prior to the first iteration
   outlier_rejection (3.f);
+  // auto vox_count = OutlierRejection(3.f, mask, initial_mask, summed_log_values, summed_log, norm_field_image, combined_tissue, balance_factors, num_voxels);
 
   threaded_copy (mask, prev_mask);
 
@@ -474,7 +532,7 @@ void run ()
           }
         }
 
-       balance_factors = X.colPivHouseholderQr().solve(y);
+//      balance_factors = X.colPivHouseholderQr().solve(y);
 
 /*
       // THEORY OF GETTING NEEDED MATRICES FOR CHOLESKY //
@@ -485,7 +543,7 @@ void run ()
        balance_factors = M.llt().solve (alpha);
 //       balance_factors = M.colPivHouseholderQr().solve(alpha);
 */
-
+       balance_factors = Choleski(X, y);
 
         // Ensure our balance factors satisfy the condition that sum(log(balance_factors)) = 0
         double log_sum = 0.0;
@@ -503,16 +561,23 @@ void run ()
 
       // Perform outlier rejection on log-domain of summed images
       outlier_rejection(1.5f);
+      // auto new_vox_count = OutlierRejection(1.5f, mask, initial_mask, summed_log_values, summed_log, norm_field_image, combined_tissue, balance_factors, num_voxels);
 
       // Check for convergence
       balance_converged = true;
+
       for (auto i = Loop (0, 3) (mask, prev_mask); i; ++i) {
         if (mask.value() != prev_mask.value()) {
           balance_converged = false;
           break;
         }
       }
-
+/*
+      if (new_vox_count != vox_count){
+      balance_converged = false;
+      vox_count = new_vox_count;
+      }
+*/
       threaded_copy (mask, prev_mask);
 
       balance_iter++;
@@ -539,7 +604,18 @@ void run ()
       }
     }
 
-    norm_field_weights = norm_field_basis.colPivHouseholderQr().solve(y);
+//    norm_field_weights = norm_field_basis.colPivHouseholderQr().solve(y);
+
+/*
+      // THEORY OF GETTING NEEDED MATRICES FOR CHOLESKY //
+       Eigen::MatrixXd m (basis_function.n_basis_vecs, basis_function.n_basis_vecs);
+       Eigen::VectorXd Alpha (basis_function.n_basis_vecs);
+       m = norm_field_basis.transpose()*norm_field_basis;
+       Alpha = norm_field_basis.transpose()*y;
+       norm_field_weights = m.llt().solve (Alpha);
+//      norm_field_weights = m.colPivHouseholderQr().solve(Alpha);
+*/
+    norm_field_weights = Choleski(norm_field_basis, y);
 
     // Generate normalisation field in the log domain
     ThreadedLoop (norm_field_log, 0, 3).run (NormFieldLog(norm_field_weights, transform, basis_function), norm_field_log);
