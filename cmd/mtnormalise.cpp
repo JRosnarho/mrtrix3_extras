@@ -222,9 +222,8 @@ ImageType DefineOutput(vector<std::string> output_filenames, vector<Header> outp
 return output_image;
 };
 
-/*
 // Function to perform outlier rejection
-int OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask, vector<float> summed_log_values, ImageType summed_log, ImageType norm_field_image, ImageType combined_tissue, Eigen::VectorXd balance_factors, int num_voxels){
+void OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask, ImageType summed_log, ImageType& combined_tissue, ImageType norm_field_image, Eigen::VectorXd balance_factors, size_t& num_voxels){
 
     ThreadedLoop (summed_log).run (
         [&balance_factors] (ImageType& sum, ImageType& comb, ImageType& field) {
@@ -236,27 +235,31 @@ int OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask
           sum.value() = std::log (s);
         }, summed_log, combined_tissue, norm_field_image);
 
+std::cout << "Summed log worked" << std::endl;
 
     threaded_copy (initial_mask, mask);
 
-//    vector<float> summed_log_values;
+    vector<float> summed_log_values;
     summed_log_values.reserve (num_voxels);
     for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
       if (mask.value())
         summed_log_values.push_back (summed_log.value());
     }
 
+std::cout << "Summed log value worked" << std::endl;
+
     num_voxels = summed_log_values.size();
 
-    const auto lower_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.25f);
+    auto lower_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.25f);
     std::nth_element (summed_log_values.begin(), lower_quartile_it, summed_log_values.end());
-    const float lower_quartile = *lower_quartile_it;
-    const auto upper_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.75f);
+    float lower_quartile = *lower_quartile_it;
+    auto upper_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.75f);
     std::nth_element (lower_quartile_it, upper_quartile_it, summed_log_values.end());
-    const float upper_quartile = *upper_quartile_it;
-    const float lower_outlier_threshold = lower_quartile - outlier_range * (upper_quartile - lower_quartile);
-    const float upper_outlier_threshold = upper_quartile + outlier_range * (upper_quartile - lower_quartile);
+    float upper_quartile = *upper_quartile_it;
+    float lower_outlier_threshold = lower_quartile - outlier_range * (upper_quartile - lower_quartile);
+    float upper_outlier_threshold = upper_quartile + outlier_range * (upper_quartile - lower_quartile);
 
+std::cout << "Setting Ranges Works" << std::endl;
 
     for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
       if (mask.value()) {
@@ -267,37 +270,35 @@ int OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask
       }
     }
 
-return num_voxels;
+std::cout << "Mask value modification done" << std::endl;
 };
-*/
 
 /*
-// Mask Modification ThreadedLoop
 struct MaskModification {
    MaskModification (size_t& num_voxels, float lower_outlier_threshold, float upper_outlier_threshold) : num_voxels (num_voxels), lower_outlier_threshold (lower_outlier_threshold), upper_outlier_threshold (upper_outlier_threshold) { } 
-    void operator () (MaskType& mask, ImageType summed_log) {
-       if (mask.value()) {
-         if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
-           mask.value() = 0;
-           num_voxels--;
-         }
-       }
+   void operator () (MaskType& mask, ImageType summed_log) {
+      if (mask.value()) {
+        if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
+          mask.value() = false;
+          num_voxels--;
+        }
+      }
    }
- size_t& num_voxels;
- float lower_outlier_threshold;
- float upper_outlier_threshold;
+   size_t& num_voxels;
+   float lower_outlier_threshold;
+   float upper_outlier_threshold;
 };
 */
 
 // Function to compute the Choleski decompostion based on
 // an N by n Eigen matrix and an N by 1 Eigen vector
 Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
-      Eigen::MatrixXd M (X.cols(), X.cols());
-      Eigen::VectorXd alpha (X.cols());
-      M = X.transpose()*X;
-      alpha = X.transpose()*y;
-      Eigen::VectorXd res = M.llt().solve (alpha);
-      return res;
+   Eigen::MatrixXd M (X.cols(), X.cols());
+   Eigen::VectorXd alpha (X.cols());
+   M = X.transpose()*X;
+   alpha = X.transpose()*y;
+   Eigen::VectorXd res = M.llt().solve (alpha);
+return res;
 };
 
 
@@ -423,6 +424,7 @@ void run ()
 
   size_t iter = 1;
 
+/*
   // Store lambda-function for performing outlier-rejection.
   // We perform a coarse outlier-rejection initially as well as
   // a finer outlier-rejection within each iteration of the
@@ -430,6 +432,7 @@ void run ()
   auto outlier_rejection = [&](float outlier_range) {  // TODO: why is this a lambda? Move to dedicated function
   auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
   //ThreadedLoop (summed_log, 0, 3).run (SummedLog(n_tissue_types, balance_factors), summed_log, combined_tissue, norm_field_image);
+
 
     ThreadedLoop (summed_log).run (
         [&balance_factors] (ImageType& sum, ImageType& comb, ImageType& field) {
@@ -473,9 +476,10 @@ void run ()
     }
 
 
-// ThreadedLoop(mask).run(MaskModification(num_voxels, lower_outlier_threshold, upper_outlier_threshold),mask, summed_log);
+// return num_voxels;
+//ThreadedLoop(mask).run(MaskModification(num_voxels, lower_outlier_threshold, upper_outlier_threshold),mask, summed_log);
 
-/*
+
     ThreadedLoop (mask).run (
         [&](MaskType& mask, ImageType& sum) {
         if (mask.value())
@@ -484,22 +488,24 @@ void run ()
             --num_voxels; // TODO: can't modify this variable in a multi-treaded context. Use a functor
           }
         }, mask, summed_log);
-*/
-  };
 
+  };
+*/
 
   input_progress.done ();
   ProgressBar progress ("performing log-domain intensity normalisation", max_iter);
 
-/*
+
   // Pre-writing the summed_log variable and the summed_log_values vector
-  vector<float> summed_log_values;
   auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
-*/
+
 
   // Perform an initial outlier rejection prior to the first iteration
-  outlier_rejection (3.f);
-  // auto vox_count = OutlierRejection(3.f, mask, initial_mask, summed_log_values, summed_log, norm_field_image, combined_tissue, balance_factors, num_voxels);
+  // outlier_rejection (3.f);
+  size_t vox_count = num_voxels;
+  size_t new_vox_count = num_voxels;
+  OutlierRejection(3.f, mask, initial_mask, summed_log, combined_tissue, norm_field_image, balance_factors, vox_count);
+  // auto vox_count = outlier_rejection (3.f);
 
   threaded_copy (mask, prev_mask);
 
@@ -532,6 +538,7 @@ void run ()
           }
         }
 
+
 //      balance_factors = X.colPivHouseholderQr().solve(y);
 
 /*
@@ -560,24 +567,27 @@ void run ()
       INFO ("Balance factors (" + str(balance_iter) + "): " + str(balance_factors.transpose()));
 
       // Perform outlier rejection on log-domain of summed images
-      outlier_rejection(1.5f);
-      // auto new_vox_count = OutlierRejection(1.5f, mask, initial_mask, summed_log_values, summed_log, norm_field_image, combined_tissue, balance_factors, num_voxels);
+      OutlierRejection(1.5f, mask, initial_mask, summed_log, combined_tissue, norm_field_image, balance_factors, new_vox_count);
+
+      // outlier_rejection(1.5f);
+      // auto new_vox_count = outlier_rejection(1.5f);
 
       // Check for convergence
       balance_converged = true;
-
+/*
       for (auto i = Loop (0, 3) (mask, prev_mask); i; ++i) {
         if (mask.value() != prev_mask.value()) {
           balance_converged = false;
           break;
         }
       }
-/*
+
+*/
       if (new_vox_count != vox_count){
       balance_converged = false;
       vox_count = new_vox_count;
       }
-*/
+
       threaded_copy (mask, prev_mask);
 
       balance_iter++;
