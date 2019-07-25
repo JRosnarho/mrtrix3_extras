@@ -206,7 +206,6 @@ struct NormFieldLog {
        Eigen::Vector3 vox (norm_field_log.index(0), norm_field_log.index(1), norm_field_log.index(2));
        Eigen::Vector3 pos = transform.voxel2scanner * vox;
        norm_field_log.value() = basis_function (pos).col(0).dot (norm_field_weights.col(0));
-//       norm_field_log.value() = basis_function (vox).col(0).dot (norm_field_weights.col(0));
    }
 
    Eigen::MatrixXd norm_field_weights;
@@ -598,7 +597,6 @@ void run ()
         Eigen::Vector3 vox (mask.index(0), mask.index(1), mask.index(2));
         Eigen::Vector3 pos = transform.voxel2scanner * vox;
         norm_field_basis.row (index) = basis_function (pos).col(0);
-//        norm_field_basis.row (index) = basis_function (vox).col(0);
 
         double sum = 0.0;
         for (size_t j = 0; j < n_tissue_types; ++j) {
