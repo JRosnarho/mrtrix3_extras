@@ -426,16 +426,10 @@ void run ()
 
 
   // Pre-writing the summed_log variable and the vox_count and new_vox_count variables
-//  auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
   size_t vox_count, new_vox_count;
 
   // Perform an initial outlier rejection prior to the first iteration
-  // outlier_rejection (3.f);
-  // std::cout << "After first outlier rejection the vox count is " << num_voxels << std::endl;
-  // auto vox_count = outlier_rejection (3.f);
-
   vox_count = OutlierRejection(3.f, mask, initial_mask, header_3D, combined_tissue, norm_field_image, balance_factors, num_voxels);
-  std::cout << "After first outlier rejection the vox count is " << vox_count << std::endl;
 
   threaded_copy (mask, prev_mask);
 
@@ -454,10 +448,6 @@ void run ()
       if (n_tissue_types > 1) {
 
         // Solve for tissue balance factors
-/*
-        Eigen::MatrixXd X (num_voxels, n_tissue_types);
-        Eigen::VectorXd y (Eigen::VectorXd::Ones (num_voxels));
-*/
         Eigen::MatrixXd X (vox_count, n_tissue_types);
         Eigen::VectorXd y (Eigen::VectorXd::Ones (vox_count));
 
@@ -490,26 +480,11 @@ void run ()
       INFO ("Balance factors (" + str(balance_iter) + "): " + str(balance_factors.transpose()));
 
       // Perform outlier rejection on log-domain of summed images
-
-      // outlier_rejection(1.5f);
-      // std::cout << "After the second outlier rejection the vox count is at " << num_voxels << std::endl;
-      // auto new_vox_count = outlier_rejection(1.5f);
-
       new_vox_count = OutlierRejection(1.5f, mask, initial_mask, header_3D, combined_tissue, norm_field_image, balance_factors, vox_count);
-      std::cout << "After the second outlier rejection the vox count is at " << new_vox_count << std::endl;
 
       // Check for convergence
       balance_converged = true;
 
-      for (auto i = Loop (0, 3) (mask, prev_mask); i; ++i) {
-        if (mask.value() != prev_mask.value()) {
-          balance_converged = false;
-          vox_count = new_vox_count;
-          break;
-        }
-      }
-
-/*
       if (new_vox_count != vox_count){
          balance_converged = false;
          vox_count = new_vox_count;
@@ -521,22 +496,14 @@ void run ()
             }
          }
       }
-*/
 
       threaded_copy (mask, prev_mask);
 
       balance_iter++;
     }
 
-    // std::cout << "The number of voxels at the y values of iteration " << iter << " is " << num_voxels << std::endl;
-     std::cout << "The number of voxels at the y values of iteration " << iter << " is " << vox_count << std::endl;
-
     // Solve for normalisation field weights in the log domain
     Transform transform (mask);
-/*
-    Eigen::MatrixXd norm_field_basis (num_voxels, basis_function.n_basis_vecs);
-    Eigen::VectorXd y (num_voxels);
-*/
     Eigen::MatrixXd norm_field_basis (vox_count, basis_function.n_basis_vecs);
     Eigen::VectorXd y (vox_count);
 
@@ -593,18 +560,16 @@ void run ()
 
   // Compute log-norm scale parameter (geometric mean of normalisation field in outlier-free mask).
   double lognorm_scale (0.0);
-//  if (num_voxels) {
   if (vox_count) {
-  struct LogNormScale {
-    LogNormScale (double& lognorm_scale, uint32_t num_voxels) : lognorm_scale (lognorm_scale), num_voxels (num_voxels) { }
-    FORCE_INLINE void operator () (decltype(mask) mask_in, decltype(norm_field_log) norm_field_lg) { if (mask_in.value ()){ lognorm_scale += norm_field_lg.value (); } lognorm_scale = std::exp(lognorm_scale / (double)num_voxels); }
+   struct LogNormScale {
+     LogNormScale (double& lognorm_scale, uint32_t num_voxels) : lognorm_scale (lognorm_scale), num_voxels (num_voxels) { }
+     FORCE_INLINE void operator () (decltype(mask) mask_in, decltype(norm_field_log) norm_field_lg) { if (mask_in.value ()){ lognorm_scale += norm_field_lg.value (); } lognorm_scale = std::exp(lognorm_scale / (double)num_voxels); }
 
-    double& lognorm_scale;
-    uint32_t num_voxels;
+     double& lognorm_scale;
+     uint32_t num_voxels;
   };
-// ThreadedLoop (mask, 0, 3).run (LogNormScale(lognorm_scale, num_voxels), mask, norm_field_log);
- ThreadedLoop (mask, 0, 3).run (LogNormScale(lognorm_scale, vox_count), mask, norm_field_log);
-  }
+  ThreadedLoop (mask, 0, 3).run (LogNormScale(lognorm_scale, vox_count), mask, norm_field_log);
+ }
 
   const bool output_balanced = get_options("balanced").size();
 
