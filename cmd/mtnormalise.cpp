@@ -176,7 +176,6 @@ struct mask_refiner {
 struct SummedLog {
   SummedLog (const size_t n_tissue_types, Eigen::VectorXd balance_factors) : n_tissue_types (n_tissue_types), balance_factors (balance_factors) { }
 
-  template <class ImageType>
   void operator () (ImageType& summed_log, ImageType& combined_tissue, ImageType& norm_field_image) {
       for (size_t j = 0; j < n_tissue_types; ++j) {
         combined_tissue.index(3) = j;
@@ -189,12 +188,11 @@ struct SummedLog {
   Eigen::VectorXd balance_factors;
 };
 
-// Templated struct calculating the norm_field_log values
+// Struct calculating the norm_field_log values
 struct NormFieldLog {
 
    NormFieldLog (Eigen::MatrixXd norm_field_weights, Transform transform, struct PolyBasisFunction basis_function) : norm_field_weights (norm_field_weights), transform (transform), basis_function (basis_function){ }
 
-   template <class ImageType>
    void operator () (ImageType& norm_field_log) {
        Eigen::Vector3 vox (norm_field_log.index(0), norm_field_log.index(1), norm_field_log.index(2));
        Eigen::Vector3 pos = transform.voxel2scanner * vox;
@@ -206,6 +204,34 @@ struct NormFieldLog {
    struct PolyBasisFunction basis_function;
 };
 
+// Function to open input images and prepare output image headers
+void IO_Prep(vector<Adapter::Replicate<ImageType>>& input_images, vector<Header>& output_headers, vector<std::string>& output_filenames, ProgressBar& input_progress, decltype(argument) arg){
+  for (size_t i = 0; i < argument.size(); i += 2) {
+    input_progress++;
+    auto image = ImageType::open (arg[i]);
+
+    if (image.ndim () > 4)
+      throw Exception ("Input image \"" + image.name() + "\" contains more than 4 dimensions.");
+
+    // Elevate image dimensions to ensure it is 4-dimensional
+    // e.g. x,y,z -> x,y,z,1
+    // This ensures consistency across multiple tissue input images
+    Header h_image4d (image);
+    h_image4d.ndim() = 4; // TODO: generate output images directly, not just headers
+    input_images.emplace_back (image, h_image4d);
+
+    if (i > 0)
+      check_dimensions (input_images[0], input_images[i / 2], 0, 3);
+
+    if (Path::exists (arg[i + 1]) && !App::overwrite_files)
+      throw Exception ("Output file \"" + arg[i] + "\" already exists. (use -force option to force overwrite)");
+
+    output_headers.push_back (std::move (h_image4d));
+    output_filenames.push_back (arg[i + 1]);
+  }
+};
+
+
 // Function to define the output values at the beginning of the run () function
 ImageType DefineOutput(vector<std::string> output_filenames, vector<Header> output_headers) {
   ImageType output_image;
@@ -214,7 +240,6 @@ ImageType DefineOutput(vector<std::string> output_filenames, vector<Header> outp
   }
 return output_image;
 };
-
 
 // Function to perform outlier rejection
 size_t OutlierRejection(float outlier_range, MaskType& mask, MaskType& initial_mask, Header header_3D, ImageType combined_tissue, ImageType norm_field_image, Eigen::VectorXd balance_factors, size_t num_voxels){
@@ -264,7 +289,6 @@ Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
 return res;
 };
 
-
 void run ()
 {
   if (argument.size() % 2)
@@ -280,10 +304,10 @@ void run ()
 
   ProgressBar input_progress ("loading input images", 3*argument.size()/2);
 
+/*
   // Open input images and prepare output image headers
   for (size_t i = 0; i < argument.size(); i += 2) {
     input_progress++;
-
     auto image = ImageType::open (argument[i]);
 
     if (image.ndim () > 4)
@@ -294,7 +318,6 @@ void run ()
     // This ensures consistency across multiple tissue input images
     Header h_image4d (image);
     h_image4d.ndim() = 4; // TODO: generate output images directly, not just headers
-
     input_images.emplace_back (image, h_image4d);
 
     if (i > 0)
@@ -306,6 +329,10 @@ void run ()
     output_headers.push_back (std::move (h_image4d));
     output_filenames.push_back (argument[i + 1]);
   }
+*/
+
+  // Open input images and prepare output image headers
+  IO_Prep(input_images, output_headers, output_filenames, input_progress, argument);
 
   // Preparing default settings to the output images
   output_image = DefineOutput(output_filenames, output_headers);
@@ -343,7 +370,6 @@ void run ()
 
   threaded_copy (initial_mask, mask);
 
-
   // Load input images into single 4d-image and zero-clamp combined-tissue image
   Header h_combined_tissue (input_images[0]);
   h_combined_tissue.ndim () = 4;
@@ -352,9 +378,7 @@ void run ()
 
   for (size_t i = 0; i < n_tissue_types; ++i) {
     input_progress++;
-
     combined_tissue.index (3) = i;
-
     ThreadedLoop (combined_tissue, 0, 3).run ([](decltype(combined_tissue)& comb, decltype(input_images[0]) in) { comb.value() = std::max<float>(in.value (), 0.f); },combined_tissue, input_images[i]);
   }
 
@@ -374,63 +398,18 @@ void run ()
 
   auto norm_field_image = ImageType::scratch (header_3D, "Normalisation field (intensity)");
   auto norm_field_log = ImageType::scratch (header_3D, "Normalisation field (log-domain)");
-
   ThreadedLoop (norm_field_image).run ([](decltype(norm_field_image)& in) { in.value() = 1.0; },norm_field_image);
 
   Eigen::VectorXd balance_factors (Eigen::VectorXd::Ones (n_tissue_types));
-
   size_t iter = 1;
-
-/*
-  // Store lambda-function for performing outlier-rejection.
-  // We perform a coarse outlier-rejection initially as well as
-  // a finer outlier-rejection within each iteration of the
-  // tissue (re)balancing loop
-  auto outlier_rejection = [&](float outlier_range) {  // TODO: why is this a lambda? Move to dedicated function
-  auto summed_log = ImageType::scratch (header_3D, "Log of summed tissue volumes");
-  ThreadedLoop (summed_log, 0, 3).run (SummedLog(n_tissue_types, balance_factors), summed_log, combined_tissue, norm_field_image);
-
-    threaded_copy (initial_mask, mask);
-
-    vector<float> summed_log_values;
-    summed_log_values.reserve (num_voxels);
-    for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
-      if (mask.value())
-        summed_log_values.push_back (summed_log.value());
-    }
-
-    num_voxels = summed_log_values.size();
-
-    const auto lower_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.25f);
-    std::nth_element (summed_log_values.begin(), lower_quartile_it, summed_log_values.end());
-    const float lower_quartile = *lower_quartile_it;
-    const auto upper_quartile_it = summed_log_values.begin() + std::round ((float)num_voxels * 0.75f);
-    std::nth_element (lower_quartile_it, upper_quartile_it, summed_log_values.end());
-    const float upper_quartile = *upper_quartile_it;
-    const float lower_outlier_threshold = lower_quartile - outlier_range * (upper_quartile - lower_quartile);
-    const float upper_outlier_threshold = upper_quartile + outlier_range * (upper_quartile - lower_quartile);
-
-    for (auto i = Loop (0, 3) (mask, summed_log); i; ++i) {
-      if (mask.value()) {
-        if (summed_log.value() < lower_outlier_threshold || summed_log.value() > upper_outlier_threshold) {
-          mask.value() = 0;
-          num_voxels--;
-        }
-      }
-    }
-  };
-*/
-
   input_progress.done ();
   ProgressBar progress ("performing log-domain intensity normalisation", max_iter);
-
 
   // Pre-writing the summed_log variable and the vox_count and new_vox_count variables
   size_t vox_count, new_vox_count;
 
   // Perform an initial outlier rejection prior to the first iteration
   vox_count = OutlierRejection(3.f, mask, initial_mask, header_3D, combined_tissue, norm_field_image, balance_factors, num_voxels);
-
   threaded_copy (mask, prev_mask);
 
   while (iter <= max_iter) {
@@ -450,9 +429,7 @@ void run ()
         // Solve for tissue balance factors
         Eigen::MatrixXd X (vox_count, n_tissue_types);
         Eigen::VectorXd y (Eigen::VectorXd::Ones (vox_count));
-
         uint32_t index = 0;
-
         for (auto i = Loop (0, 3) (mask, combined_tissue, norm_field_image); i; ++i) {
           if (mask.value()) {
             for (size_t j = 0; j < n_tissue_types; ++j) {
@@ -462,7 +439,6 @@ void run ()
             ++index;
           }
         }
-
         balance_factors = Choleski(X, y);
 
         // Ensure our balance factors satisfy the condition that sum(log(balance_factors)) = 0
@@ -496,9 +472,7 @@ void run ()
             }
          }
       }
-
       threaded_copy (mask, prev_mask);
-
       balance_iter++;
     }
 
@@ -506,9 +480,7 @@ void run ()
     Transform transform (mask);
     Eigen::MatrixXd norm_field_basis (vox_count, basis_function.n_basis_vecs);
     Eigen::VectorXd y (vox_count);
-
     uint32_t index = 0;
-
     for (auto i = Loop (0, 3) (mask, combined_tissue); i; ++i) {
       if (mask.value()) {
         Eigen::Vector3 vox (mask.index(0), mask.index(1), mask.index(2));
@@ -523,7 +495,6 @@ void run ()
         y (index++) = std::log(sum) - log_norm_value;
       }
     }
-
     norm_field_weights = Choleski(norm_field_basis, y);
 
     // Generate normalisation field in the log domain
@@ -535,7 +506,6 @@ void run ()
     progress++;
     iter++;
   }
-
   progress.done();
 
   ProgressBar output_progress("writing output images", output_filenames.size());
@@ -582,6 +552,7 @@ void run ()
       balance_multiplier = balance_factors[j];
       output_headers[j].keyval()["lognorm_balance"] = str(balance_multiplier);
     }
+
     output_image = ImageType::create (output_filenames[j], output_headers[j]);
     const size_t n_vols = input_images[j].size(3);
     const Eigen::VectorXf zero_vec = Eigen::VectorXf::Zero (n_vols);
