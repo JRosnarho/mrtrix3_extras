@@ -20,14 +20,15 @@ function get_mask {
 }
 
 
-# normalise_and_rescale weights output.mif mask.mif rescaled_output.mif
+# normalise_and_rescale weights
+# output.mif mask.mif rescaled_output.mif
 function normalise_and_rescale {
   mrconvert "$1" __tmp-[].mif -force
   #scale=($(~/mrtrix3_mine/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
   scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
   #scale=($(~/mrtrix3_extras/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -balanced  -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
   #scale=($(~/mrtrix3/bin/mtnormalise __tmp{,_norm}-0.mif __tmp{,_norm}-1.mif __tmp{,_norm}-2.mif -mask "$2" -info -force 2>&1 | grep "Balance factors" | tail -n 1 | awk '{ print $6, $7, $8 }'))
-  echo ${scale[@]} 
+  echo ${scale[@]}
   for n in {0..2}; do mrcalc __tmp_norm-$n.mif ${scale[$n]} -mult __tmp_norm_rescaled-$n.mif -force; done
   mrcat __tmp_norm_rescaled-*.mif -axis 3 "$3"
   rm -f __tmp*
@@ -79,7 +80,7 @@ function compare_outputs {
 }
 
 # automatically compute volume fractions of a set image
-# input.mif output.mif
+# input.mif output_rescaled.mif
 function get_fraction {
   cat > H.txt <<EOD
 650 350 900
@@ -87,39 +88,60 @@ function get_fraction {
 350 1500 250
 EOD
 
- ~/mrtrix3_extras/bin/icls "$1" H.txt "$2" -quiet;
- extract_H "$2" "$1" H.txt
- get_mask "$2" mask.mif
- normalise_and_rescale "$2" mask.mif output_rescaled.mif
+ ~/mrtrix3_extras/bin/icls "$1" H.txt output.mif -quiet;
+ extract_H output.mif "$1" H.txt
+ get_mask output.mif mask.mif
+ normalise_and_rescale output.mif mask.mif "$2"
 
-# for loop variant without a tolerance condition
-#for i in {0..10};
-#do ~/mrtrix3_extras/bin/icls "$1" H.txt "$2" -quiet;
-#   extract_H "$2" "$1" H.txt
-#   if [ "$i" != "10" ];
-#    then rm "$2";
-#   fi;
-#done
-#get_mask "$2" mask.mif
-#normalise_and_rescale "$2" mask.mif output_rescaled.mif
-#rm mask.mif
+#rm mask.mif output.mif
+}
+
+# automatically compute volume fractions of a set image with for loop condition
+# input.mif output_rescaled.mif
+function get_fraction_loop {
+  cat > H.txt <<EOD
+650 350 900
+1000 1400 900
+350 1500 250
+EOD
+
+for i in {0..10};
+do ~/mrtrix3_extras/bin/icls "$1" H.txt output.mif -quiet;
+   extract_H output.mif "$1" H.txt
+   if [ "$i" != "10" ];
+    then rm output.mif;
+   fi;
+done
+get_mask output.mif mask.mif
+normalise_and_rescale output.mif mask.mif "$2"
+#rm mask.mif output.mif
+}
+
+# automatically compute volume fractions of a set image with tolerance conditions
+# input.mif output_rescaled.mif
+function get_fraction_tol {
+  cat > H.txt <<EOD
+650 350 900
+1000 1400 900
+350 1500 250
+EOD
 
 # loop with a tolerance condition
-#tol=$(bc <<< "scale=4;0.001");
-#test=$(bc <<< "scale=4;$tol+1");
+tol=$(bc <<< "scale=4;0.001");
+test=$(bc <<< "scale=4;$tol+1");
 
-#while [ "$(bc <<< "$tol < $test")" == "1"  ];
-#do ~/mrtrix3_extras/bin/icls "$1" H.txt "$2" -quiet;
-   #extract_H "$2" "$1" NewH.txt
-   #test=$(H_comparison H.txt NewH.txt)
-   #if [ 1 -eq "$(echo "$tol < $test" |bc)" ];
-    #then cp NewH.txt H.txt;
-    #rm "$2" NewH.txt;
-   #fi;
- #done
-#cp NewH.txt H.txt;
-#rm NewH.txt;
-#get_mask "$2" mask.mif
-#normalise_and_rescale "$2" mask.mif output_rescaled.mif
-#rm mask.mif
+while [ "$(bc <<< "$tol < $test")" == "1"  ];
+do ~/mrtrix3_extras/bin/icls "$1" H.txt output.mif -quiet;
+   extract_H output.mif "$1" NewH.txt
+   test=$(H_comparison H.txt NewH.txt)
+   if [ 1 -eq "$(echo "$tol < $test" |bc)" ];
+    then cp NewH.txt H.txt;
+    rm output.mif NewH.txt;
+   fi;
+ done
+cp NewH.txt H.txt;
+rm NewH.txt;
+get_mask output.mif mask.mif
+normalise_and_rescale output.mif mask.mif "$2"
+#rm mask.mif output.mif
 }
