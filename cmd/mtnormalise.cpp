@@ -217,7 +217,7 @@ void IO_Prep(vector<Adapter::Replicate<ImageType>>& input_images, vector<Header>
     // e.g. x,y,z -> x,y,z,1
     // This ensures consistency across multiple tissue input images
     Header h_image4d (image);
-    h_image4d.ndim() = 4; // TODO: generate output images directly, not just headers
+    h_image4d.ndim() = 4;
     input_images.emplace_back (image, h_image4d);
 
     if (i > 0)
@@ -289,6 +289,79 @@ Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
 return res;
 };
 
+// Function to solve for tissue balance factors
+void BalFactSolver(Eigen::MatrixXd& X, Eigen::VectorXd& y, MaskType mask, ImageType combined_tissue, ImageType norm_field_image, size_t n_tissue_types){
+ uint32_t index = 0;
+   for (auto i = Loop (0, 3) (mask, combined_tissue, norm_field_image); i; ++i) {
+      if (mask.value()) {
+        for (size_t j = 0; j < n_tissue_types; ++j) {
+          combined_tissue.index (3) = j;
+          X (index, j) = combined_tissue.value() / norm_field_image.value();
+        }
+      ++index;
+      }
+   }
+};
+
+// Function ensuring our balance factors satisfy the condition that sum(log(balance_factors)) = 0
+void BalFactCondition(Eigen::VectorXd& balance_factors, size_t n_tissue_types){
+        double log_sum = 0.0;
+        for (size_t j = 0; j < n_tissue_types; ++j) {
+          if (balance_factors(j) <= 0.0)
+            throw Exception ("Non-positive tissue balance factor was computed."
+                             " Tissue index: " + str(j+1) + " Balance factor: " + str(balance_factors(j)) +
+                             " Needs to be strictly positive!");
+          log_sum += std::log (balance_factors(j));
+        }
+        balance_factors /= std::exp (log_sum / n_tissue_types);
+};
+
+// Function to solve for normalisation field weights in the log domain
+void NormWeightsLog(Eigen::MatrixXd& norm_field_basis, Eigen::VectorXd& y, Eigen::VectorXd balance_factors, struct PolyBasisFunction basis_function, MaskType mask, ImageType& combined_tissue, Transform transform, size_t n_tissue_types, float log_norm_value){
+    uint32_t index = 0;
+    for (auto i = Loop (0, 3) (mask, combined_tissue); i; ++i) {
+      if (mask.value()) {
+        Eigen::Vector3 vox (mask.index(0), mask.index(1), mask.index(2));
+        Eigen::Vector3 pos = transform.voxel2scanner * vox;
+        norm_field_basis.row (index) = basis_function (pos).col(0);
+
+        double sum = 0.0;
+        for (size_t j = 0; j < n_tissue_types; ++j) {
+          combined_tissue.index(3) = j;
+          sum += balance_factors(j) * combined_tissue.value() ;
+        }
+        y (index++) = std::log(sum) - log_norm_value;
+      }
+    }
+};
+
+// Function to write out the output images
+void WriteOutput(ImageType& output_image, vector<Adapter::Replicate<ImageType>> input_images, vector<Header> output_headers, vector<std::string> output_filenames, bool output_balanced, ImageType norm_field_image, double lognorm_scale, ProgressBar& output_progress, Eigen::VectorXd balance_factors){
+  for (size_t j = 0; j < output_filenames.size(); ++j) {
+    output_progress++;
+
+    float balance_multiplier = 1.0f;
+    output_headers[j].keyval()["lognorm_scale"] = str(lognorm_scale);
+    if (output_balanced) {
+      balance_multiplier = balance_factors[j];
+      output_headers[j].keyval()["lognorm_balance"] = str(balance_multiplier);
+    }
+
+    output_image = ImageType::create (output_filenames[j], output_headers[j]);
+    const size_t n_vols = input_images[j].size(3);
+    const Eigen::VectorXf zero_vec = Eigen::VectorXf::Zero (n_vols);
+
+  struct ReadInOutput {
+     ReadInOutput (Eigen::VectorXf zero_vec, float balance_multiplier) : zero_vec (zero_vec), balance_multiplier (balance_multiplier) { }
+     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) {in_im.index(3) = 0; if (in_im.value() < 0.f) { out_im.row(3) = zero_vec; } else { out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value(); } }
+     Eigen::VectorXf zero_vec;
+     float balance_multiplier;
+  };
+
+  ThreadedLoop (output_image, 0, 3).run (ReadInOutput(zero_vec, balance_multiplier), output_image, input_images[j], norm_field_image);
+  }
+};
+
 void run ()
 {
   if (argument.size() % 2)
@@ -303,33 +376,6 @@ void run ()
   ImageType output_image;
 
   ProgressBar input_progress ("loading input images", 3*argument.size()/2);
-
-/*
-  // Open input images and prepare output image headers
-  for (size_t i = 0; i < argument.size(); i += 2) {
-    input_progress++;
-    auto image = ImageType::open (argument[i]);
-
-    if (image.ndim () > 4)
-      throw Exception ("Input image \"" + image.name() + "\" contains more than 4 dimensions.");
-
-    // Elevate image dimensions to ensure it is 4-dimensional
-    // e.g. x,y,z -> x,y,z,1
-    // This ensures consistency across multiple tissue input images
-    Header h_image4d (image);
-    h_image4d.ndim() = 4; // TODO: generate output images directly, not just headers
-    input_images.emplace_back (image, h_image4d);
-
-    if (i > 0)
-      check_dimensions (input_images[0], input_images[i / 2], 0, 3);
-
-    if (Path::exists (argument[i + 1]) && !App::overwrite_files)
-      throw Exception ("Output file \"" + argument[i] + "\" already exists. (use -force option to force overwrite)");
-
-    output_headers.push_back (std::move (h_image4d));
-    output_filenames.push_back (argument[i + 1]);
-  }
-*/
 
   // Open input images and prepare output image headers
   IO_Prep(input_images, output_headers, output_filenames, input_progress, argument);
@@ -427,30 +473,14 @@ void run ()
       if (n_tissue_types > 1) {
 
         // Solve for tissue balance factors
+
         Eigen::MatrixXd X (vox_count, n_tissue_types);
         Eigen::VectorXd y (Eigen::VectorXd::Ones (vox_count));
-        uint32_t index = 0;
-        for (auto i = Loop (0, 3) (mask, combined_tissue, norm_field_image); i; ++i) {
-          if (mask.value()) {
-            for (size_t j = 0; j < n_tissue_types; ++j) {
-              combined_tissue.index (3) = j;
-              X (index, j) = combined_tissue.value() / norm_field_image.value();
-            }
-            ++index;
-          }
-        }
+        BalFactSolver(X, y, mask, combined_tissue, norm_field_image, n_tissue_types);
         balance_factors = Choleski(X, y);
 
         // Ensure our balance factors satisfy the condition that sum(log(balance_factors)) = 0
-        double log_sum = 0.0;
-        for (size_t j = 0; j < n_tissue_types; ++j) {
-          if (balance_factors(j) <= 0.0)
-            throw Exception ("Non-positive tissue balance factor was computed."
-                             " Tissue index: " + str(j+1) + " Balance factor: " + str(balance_factors(j)) +
-                             " Needs to be strictly positive!");
-          log_sum += std::log (balance_factors(j));
-        }
-        balance_factors /= std::exp (log_sum / n_tissue_types);
+        BalFactCondition(balance_factors, n_tissue_types);
       }
 
       INFO ("Balance factors (" + str(balance_iter) + "): " + str(balance_factors.transpose()));
@@ -472,6 +502,7 @@ void run ()
             }
          }
       }
+
       threaded_copy (mask, prev_mask);
       balance_iter++;
     }
@@ -480,21 +511,7 @@ void run ()
     Transform transform (mask);
     Eigen::MatrixXd norm_field_basis (vox_count, basis_function.n_basis_vecs);
     Eigen::VectorXd y (vox_count);
-    uint32_t index = 0;
-    for (auto i = Loop (0, 3) (mask, combined_tissue); i; ++i) {
-      if (mask.value()) {
-        Eigen::Vector3 vox (mask.index(0), mask.index(1), mask.index(2));
-        Eigen::Vector3 pos = transform.voxel2scanner * vox;
-        norm_field_basis.row (index) = basis_function (pos).col(0);
-
-        double sum = 0.0;
-        for (size_t j = 0; j < n_tissue_types; ++j) {
-          combined_tissue.index(3) = j;
-          sum += balance_factors(j) * combined_tissue.value() ;
-        }
-        y (index++) = std::log(sum) - log_norm_value;
-      }
-    }
+    NormWeightsLog(norm_field_basis, y, balance_factors, basis_function, mask, combined_tissue, transform, n_tissue_types, log_norm_value);
     norm_field_weights = Choleski(norm_field_basis, y);
 
     // Generate normalisation field in the log domain
@@ -543,6 +560,7 @@ void run ()
 
   const bool output_balanced = get_options("balanced").size();
 
+/*
   for (size_t j = 0; j < output_filenames.size(); ++j) {
     output_progress++;
 
@@ -559,10 +577,12 @@ void run ()
 
   struct ReadInOutput {
      ReadInOutput (Eigen::VectorXf zero_vec, float balance_multiplier) : zero_vec (zero_vec), balance_multiplier (balance_multiplier) { }
-     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) { in_im.index(3) = 0; if (in_im.value() < 0.f) { out_im.row(3) = zero_vec; } else { out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value(); } }
+     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) {in_im.index(3) = 0; if (in_im.value() < 0.f) { out_im.row(3) = zero_vec; } else { out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value(); } }
      Eigen::VectorXf zero_vec;
      float balance_multiplier;
   };
   ThreadedLoop (output_image, 0, 3).run (ReadInOutput(zero_vec, balance_multiplier), output_image, input_images[j], norm_field_image);
   }
+*/
+WriteOutput(output_image, input_images, output_headers, output_filenames, output_balanced, norm_field_image, lognorm_scale, output_progress, balance_factors);
 }
