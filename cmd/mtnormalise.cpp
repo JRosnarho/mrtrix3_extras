@@ -289,6 +289,16 @@ Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
 return res;
 };
 
+// Function to refine the mask
+void RefinedMask(vector<Adapter::Replicate<ImageType>> input_images, MaskType& initial_mask, MaskType orig_mask, ProgressBar& input_progress, ImageType summed){
+    for (size_t j = 0; j < input_images.size(); ++j) {
+      input_progress++;
+      ThreadedLoop(summed).run([](decltype(summed)& sum, decltype(input_images[0])& in){sum.value()+=in.value();}, summed, input_images[j]);
+    }
+ThreadedLoop(summed).run([](ImageType& summed, MaskType& initial_mask, MaskType& refined){refined.value() = ( std::isfinite(float(summed.value())) && summed.value() > 0.f && initial_mask.value() );}, summed, orig_mask, initial_mask);
+};
+
+
 // Function to solve for tissue balance factors
 void BalFactSolver(Eigen::MatrixXd& X, Eigen::VectorXd& y, MaskType mask, ImageType combined_tissue, ImageType norm_field_image, size_t n_tissue_types){
  uint32_t index = 0;
@@ -353,7 +363,14 @@ void WriteOutput(ImageType& output_image, vector<Adapter::Replicate<ImageType>> 
 
   struct ReadInOutput {
      ReadInOutput (Eigen::VectorXf zero_vec, float balance_multiplier) : zero_vec (zero_vec), balance_multiplier (balance_multiplier) { }
-     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) {in_im.index(3) = 0; if (in_im.value() < 0.f) { out_im.row(3) = zero_vec; } else { out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value(); } }
+     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) 
+     {in_im.index(3) = 0;
+       if (in_im.value() < 0.f) {
+          out_im.row(3) = zero_vec;
+       } else {
+          out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value();
+       }
+     }
      Eigen::VectorXf zero_vec;
      float balance_multiplier;
   };
@@ -401,9 +418,9 @@ void run ()
   auto initial_mask = MaskType::scratch (mask_header, "Initial processing mask");
   auto mask = MaskType::scratch (mask_header, "Processing mask");
   auto prev_mask = MaskType::scratch (mask_header, "Previous processing mask");
+  auto summed = ImageType::scratch (header_3D, "Summed tissue volumes");
 
-  {
-    auto summed = ImageType::scratch (header_3D, "Summed tissue volumes");
+/*
     for (size_t j = 0; j < input_images.size(); ++j) {
       input_progress++;
       struct ValueAccumulator {
@@ -412,8 +429,9 @@ void run ()
       ThreadedLoop (summed, 0, 3).run (ValueAccumulator(), summed, input_images[j]);
     }
     ThreadedLoop (summed, 0, 3).run (mask_refiner(), summed, orig_mask, initial_mask);
-  }
+*/
 
+  RefinedMask(input_images, initial_mask, orig_mask, input_progress, summed);
   threaded_copy (initial_mask, mask);
 
   // Load input images into single 4d-image and zero-clamp combined-tissue image
@@ -548,41 +566,15 @@ void run ()
   // Compute log-norm scale parameter (geometric mean of normalisation field in outlier-free mask).
   double lognorm_scale (0.0);
   if (vox_count) {
-   struct LogNormScale {
-     LogNormScale (double& lognorm_scale, uint32_t num_voxels) : lognorm_scale (lognorm_scale), num_voxels (num_voxels) { }
-     FORCE_INLINE void operator () (decltype(mask) mask_in, decltype(norm_field_log) norm_field_lg) { if (mask_in.value ()){ lognorm_scale += norm_field_lg.value (); } lognorm_scale = std::exp(lognorm_scale / (double)num_voxels); }
-
-     double& lognorm_scale;
-     uint32_t num_voxels;
-  };
-  ThreadedLoop (mask, 0, 3).run (LogNormScale(lognorm_scale, vox_count), mask, norm_field_log);
- }
+    struct LogNormScale {
+      LogNormScale (double& lognorm_scale, uint32_t num_voxels) : lognorm_scale (lognorm_scale), num_voxels (num_voxels) { }
+      FORCE_INLINE void operator () (decltype(mask) mask_in, decltype(norm_field_log) norm_field_lg) { if (mask_in.value ()){ lognorm_scale += norm_field_lg.value (); } lognorm_scale = std::exp(lognorm_scale / (double)num_voxels); }
+      double& lognorm_scale;
+      uint32_t num_voxels;
+   };
+   ThreadedLoop (mask, 0, 3).run (LogNormScale(lognorm_scale, vox_count), mask, norm_field_log);
+  }
 
   const bool output_balanced = get_options("balanced").size();
-
-/*
-  for (size_t j = 0; j < output_filenames.size(); ++j) {
-    output_progress++;
-
-    float balance_multiplier = 1.0f;
-    output_headers[j].keyval()["lognorm_scale"] = str(lognorm_scale);
-    if (output_balanced) {
-      balance_multiplier = balance_factors[j];
-      output_headers[j].keyval()["lognorm_balance"] = str(balance_multiplier);
-    }
-
-    output_image = ImageType::create (output_filenames[j], output_headers[j]);
-    const size_t n_vols = input_images[j].size(3);
-    const Eigen::VectorXf zero_vec = Eigen::VectorXf::Zero (n_vols);
-
-  struct ReadInOutput {
-     ReadInOutput (Eigen::VectorXf zero_vec, float balance_multiplier) : zero_vec (zero_vec), balance_multiplier (balance_multiplier) { }
-     FORCE_INLINE void operator () (decltype(output_image)& out_im, decltype(input_images[0]) in_im, decltype(norm_field_image) norm_field_im) {in_im.index(3) = 0; if (in_im.value() < 0.f) { out_im.row(3) = zero_vec; } else { out_im.row(3) = Eigen::VectorXf{in_im.row(3)} * balance_multiplier / norm_field_im.value(); } }
-     Eigen::VectorXf zero_vec;
-     float balance_multiplier;
-  };
-  ThreadedLoop (output_image, 0, 3).run (ReadInOutput(zero_vec, balance_multiplier), output_image, input_images[j], norm_field_image);
-  }
-*/
-WriteOutput(output_image, input_images, output_headers, output_filenames, output_balanced, norm_field_image, lognorm_scale, output_progress, balance_factors);
+  WriteOutput(output_image, input_images, output_headers, output_filenames, output_balanced, norm_field_image, lognorm_scale, output_progress, balance_factors);
 }
