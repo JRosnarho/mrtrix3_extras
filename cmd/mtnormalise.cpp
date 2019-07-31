@@ -455,7 +455,7 @@ void run ()
          for (auto i = Loop (0, 3) (mask, prev_mask); i; ++i) {
             if (mask.value() != prev_mask.value()) {
             balance_converged = false;
-            // vox_count = new_vox_count;
+            vox_count = new_vox_count;
             break;
             }
          }
