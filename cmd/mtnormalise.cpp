@@ -165,13 +165,6 @@ struct PolyBasisFunction { MEMALIGN (PolyBasisFunction)
   }
 };
 
-struct mask_refiner {
-  FORCE_INLINE void operator() (Image<float>& summed, Image<bool>& initial_mask, Image<bool>& refined) const
-  {
-    refined.value() = ( std::isfinite(float(summed.value())) && summed.value() > 0.f && initial_mask.value() );
-  }
-};
-
 // Struct calculating the initial summed_log values
 struct SummedLog {
   SummedLog (const size_t n_tissue_types, Eigen::VectorXd balance_factors) : n_tissue_types (n_tissue_types), balance_factors (balance_factors) { }
@@ -462,6 +455,7 @@ void run ()
          for (auto i = Loop (0, 3) (mask, prev_mask); i; ++i) {
             if (mask.value() != prev_mask.value()) {
             balance_converged = false;
+            // vox_count = new_vox_count;
             break;
             }
          }
