@@ -254,7 +254,6 @@ Eigen::VectorXd Choleski(Eigen::MatrixXd X, Eigen::VectorXd y) {
 return res;
 };
 
-
 // Function to refine the mask
 void RefinedMask(vector<Adapter::Replicate<ImageType>> input_images, MaskType& initial_mask, MaskType orig_mask, ProgressBar& input_progress, ImageType summed){
     for (size_t j = 0; j < input_images.size(); ++j) {
@@ -263,7 +262,6 @@ void RefinedMask(vector<Adapter::Replicate<ImageType>> input_images, MaskType& i
     }
 ThreadedLoop(summed).run([](ImageType& summed, MaskType& initial_mask, MaskType& refined){refined.value() = ( std::isfinite(float(summed.value())) && summed.value() > 0.f && initial_mask.value() );}, summed, orig_mask, initial_mask);
 };
-
 
 // Function to solve for tissue balance factors
 void BalFactSolver(Eigen::MatrixXd& X, Eigen::VectorXd& y, MaskType mask, ImageType combined_tissue, ImageType norm_field_image, size_t n_tissue_types){
@@ -306,7 +304,7 @@ void run ()
   const int order = get_option_value<int> ("order", DEFAULT_POLY_ORDER);
   PolyBasisFunction basis_function (order);
 
-  vector<Adapter::Replicate<ImageType>> input_images; // TODO: why Adapter::Replicate ?
+  vector<Adapter::Replicate<ImageType>> input_images;
   vector<Header> output_headers;
   vector<std::string> output_filenames;
   ImageType output_image;
@@ -325,7 +323,7 @@ void run ()
     // e.g. x,y,z -> x,y,z,1
     // This ensures consistency across multiple tissue input images
     Header h_image4d (image);
-    h_image4d.ndim() = 4; // TODO: generate output images directly, not just headers
+    h_image4d.ndim() = 4;
     input_images.emplace_back (image, h_image4d);
 
     if (i > 0)
