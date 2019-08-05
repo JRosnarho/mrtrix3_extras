@@ -120,7 +120,7 @@ int GetBasisVecs(int order)
   return n_basis_vecs;
 };
 
-// Un-templated PolyBasisFunction struct to get the user specified amount of basis functions
+//PolyBasisFunction struct to get the user specified amount of basis functions
 struct PolyBasisFunction { MEMALIGN (PolyBasisFunction)
 
   PolyBasisFunction(const int order) : n_basis_vecs (GetBasisVecs(order)) { };
@@ -436,7 +436,6 @@ void run ()
       if (n_tissue_types > 1) {
 
         // Solve for tissue balance factors
-
         Eigen::MatrixXd X (vox_count, n_tissue_types);
         Eigen::VectorXd y (Eigen::VectorXd::Ones (vox_count));
         BalFactSolver(X, y, mask, combined_tissue, norm_field_image, n_tissue_types);
@@ -461,7 +460,6 @@ void run ()
 
       // Check for convergence
       balance_converged = true;
-
       if (new_vox_count != vox_count){
          balance_converged = false;
          vox_count = new_vox_count;
@@ -474,7 +472,6 @@ void run ()
             }
          }
       }
-
       threaded_copy (mask, prev_mask);
       balance_iter++;
     }
